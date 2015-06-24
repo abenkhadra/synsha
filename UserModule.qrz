@@ -1,0 +1,259 @@
+// ************************************************************************** //
+// This module receives a message in 32 bit words hashes it block by block    //
+// using the SHA-256 algorithm.						      //
+// 2012, M.Ammar Ben Khadra						      //
+// ************************************************************************** //
+
+// Verify module has been modified to run in parallel.
+// Temporary variable beta have been added to reschedule the next 
+//     schedule calculation.
+// event bv temp1 has been added to force the order of synthesis.
+
+macro word_size = 32;       // word consists of 32 bits
+macro block_size = 16;      // block contains 16 words
+
+macro SHL(x,n) = (x{word_size-n-1:}@nat2bv(0,n));
+macro SHR(x,n) = (nat2bv(0,n)@x{:n});
+
+
+macro Ch(x,y,z)  = ((x and y) xor ((not x) and z));
+macro Maj(x,y,z) = ((x and y) xor (x and z) xor (y and z));
+
+
+macro ROTL(x,n) = (SHL(x,n) or SHR(x,word_size-n));
+macro ROTR(x,n) = (SHR(x,n) or SHL(x,word_size-n));
+
+
+macro sum0(x)   = (ROTR(x,2) xor ROTR(x,13) xor ROTR(x,22));
+macro sum1(x)   = (ROTR(x,6) xor ROTR(x,11) xor ROTR(x,25));
+
+macro sigma0(x) = (ROTR(x,7) xor ROTR(x,18) xor SHR(x,3));
+macro sigma1(x) = (ROTR(x,17) xor ROTR(x,19) xor SHR(x,10));
+
+macro t_a = 0;
+macro t_b = 1;
+macro t_c = 2;
+macro t_d = 3;
+macro t_e = 4;
+macro t_f = 5;
+macro t_g = 6;
+macro t_h = 7;
+
+
+macro sAdd(a,b)            = (nat2bv(bv2nat(a) + bv2nat(b), word_size));
+macro sAdd3(a,b,c)         = (nat2bv(bv2nat(a) + bv2nat(b) + bv2nat(c), word_size));
+
+module UserModule (
+	bv{32}	?msg_data,
+	bool	?msg_valid,
+	bool	?msg_end,
+	event	bool	!msg_ack,
+
+	mem	bv{32}	!hash_data,
+	mem  	bool	!hash_valid,
+	event	bool	?hash_ack
+) {
+
+
+   // For the timebeing, we do not check that the message bit length is < 2^64
+
+   // Global constants
+   [64] bv{word_size} Ki;       // Constants vectors
+   
+   // Per message variables
+   [8]  bv{word_size} hash_vals; // hash value of the message
+   nat{exp(2,64)} total_msg_length;
+   nat{block_size+1} received_word_num;   // Number of message words (32bit size each) received 
+  
+   
+   [16] bv{word_size} schedule_vals; // temporary schedule 'W' values used in hashing
+
+
+   event bool schedule_available, hash_block_rdy; // synchronization signals
+   bool hash_block_start;
+
+   [8]  bv{word_size} tvals; // temporary values used in hashing
+   bv{word_size} alpha; // temporary value used for operation rescheduling
+	
+   nat{64} t;
+   event bool end_iteration;
+
+	
+   InitializeConstants(Ki);
+
+   {loop{
+      
+      hash_vals[0] = 0x6A09E667;
+      hash_vals[1] = 0xBB67AE85;
+      hash_vals[2] = 0x3C6EF372;
+      hash_vals[3] = 0xA54FF53A;
+      hash_vals[4] = 0x510E527F;
+      hash_vals[5] = 0x9B05688C;
+      hash_vals[6] = 0x1F83D9AB;
+      hash_vals[7] = 0x5BE0CD19;
+                                             
+      total_msg_length = 0;
+      received_word_num = 0;
+      hash_valid = false;
+      hash_block_start = false;
+       
+      while(! msg_end ) {
+         // wait until module is ready to receive the next word
+         immediate await ( msg_valid );
+
+         if (received_word_num < block_size ){
+             //current_word = msg_data ; // Read word and do something with it
+             msg_ack = true;
+            // Set the first 16 schedules Wt
+             next(schedule_vals[received_word_num]) = msg_data;
+             next(received_word_num) = received_word_num + 1;
+             next(total_msg_length) = total_msg_length+32;
+             // Start a hash iteration as soon as a schedule is available
+             emit next(schedule_available);
+             pause;                      
+         }else{        
+             next(received_word_num) = 0;
+             // All 16 words has been received now complete the last 48 iterations
+             emit(hash_block_start);
+             await(hash_block_rdy);
+             hash_block_start = false;
+         }                                                                                 
+      }
+  
+      // Handle the case when the massage length has exactly one block alignment
+             
+      if ( received_word_num == 16){                                  
+         next(received_word_num) = 0;
+         emit(hash_block_start);
+         await(hash_block_rdy);
+         hash_block_start = false;
+      }
+
+      // Start padding 
+      next(schedule_vals[received_word_num]) = true@nat2bv(0,31);
+      next(received_word_num) = received_word_num + 1;
+      emit next(schedule_available);
+      pause; 
+         
+      // In case next to last message, pad this block with zeros.
+      if ( received_word_num > 14){                                  
+         if (received_word_num == 15){
+            next(schedule_vals[received_word_num]) = nat2bv(0,32);
+            emit next(schedule_available);
+            pause;
+         }
+
+         next(received_word_num) = 0;
+
+         // HashBlock
+         emit(hash_block_start);
+         await(hash_block_rdy);
+         hash_block_start = false;
+      }
+         
+      // Pad from the current index and leave the last 2 words for message length
+      while(received_word_num < block_size-2){     
+         next(schedule_vals[received_word_num]) = nat2bv(0,32);
+         next(received_word_num) = received_word_num + 1;
+         emit next(schedule_available);
+         pause;
+      }
+      
+      // Append message length
+      next(schedule_vals[14]) = int2bv(total_msg_length,64){:32};
+      emit next(schedule_available);
+      pause;
+      // Watch out, this value wan't be available to HashBlock till the next clock cycle 
+      //   in HashBlock.
+      next(schedule_vals[15]) = int2bv(total_msg_length,64){31:};
+      emit next(schedule_available);
+      pause;
+         
+      // HashBlock
+      emit(hash_block_start);
+      await(hash_block_rdy);
+        
+      msg_ack = true;
+
+      hash_valid = true ;
+      // Send message hash
+      for ( i = 0..7) {
+          hash_data = hash_vals[7-i];
+          immediate await ( hash_ack ) ;
+          pause;
+      }
+
+   }}
+   ||
+   {
+      loop{
+         immediate await(schedule_available);
+
+         // Initialize the temporary hash values of a block
+         next(t) = 0;
+         for(i=0..7){
+             next(tvals[i]) = hash_vals[i];        
+         }   
+         next(alpha)  = sAdd(sAdd(hash_vals[t_h], schedule_vals[0]), Ki[0]);
+         pause;
+
+         // Inner loop iteration
+         while(!end_iteration){
+           if (t < 63){
+               next(t) = t + 1;
+               if (t < 14){
+                  immediate await(schedule_available);
+                  next(alpha) = sAdd(sAdd(tvals[t_g], schedule_vals[t+1]), Ki[t+1]);
+               }else {
+                  immediate await(schedule_available or hash_block_start);
+                  next(schedule_vals[15]) = sAdd(sAdd(sAdd(schedule_vals[0], schedule_vals[9]),sigma0(schedule_vals[1])), sigma1(schedule_vals[14]));
+                  next(schedule_vals[14]) = schedule_vals[15];
+                  next(schedule_vals[13]) = schedule_vals[14];
+                  next(schedule_vals[12]) = schedule_vals[13];
+                  next(schedule_vals[11]) = schedule_vals[12];
+                  next(schedule_vals[10]) = schedule_vals[11];
+                  next(schedule_vals[9]) = schedule_vals[10];
+                  next(schedule_vals[8]) = schedule_vals[9];
+                  next(schedule_vals[7]) = schedule_vals[8];
+                  next(schedule_vals[6]) = schedule_vals[7];
+                  next(schedule_vals[5]) = schedule_vals[6];
+                  next(schedule_vals[4]) = schedule_vals[5];
+                  next(schedule_vals[3]) = schedule_vals[4];
+                  next(schedule_vals[2]) = schedule_vals[3];
+                  next(schedule_vals[1]) = schedule_vals[2];
+                  next(schedule_vals[0]) = schedule_vals[1];
+                  next(alpha) = sAdd(sAdd(tvals[t_g], schedule_vals[15]), Ki[t+1]);
+              }
+           }else{
+              next(end_iteration) = true;
+           }
+           // Inner-loop iteration
+           next(tvals[t_h]) = tvals[t_g];
+           next(tvals[t_g]) = tvals[t_f];
+           next(tvals[t_f]) = tvals[t_e];
+           next(tvals[t_e]) = sAdd(sAdd(sum1(tvals[t_e]), Ch(tvals[t_e], tvals[t_f], tvals[t_g])), sAdd(tvals[t_d], alpha));           
+           next(tvals[t_d]) = tvals[t_c];
+           next(tvals[t_c]) = tvals[t_b];
+           next(tvals[t_b]) = tvals[t_a];
+           next(tvals[t_a]) = sAdd(sAdd(sAdd(sum0(tvals[t_a]), Maj(tvals[t_a], tvals[t_b], tvals[t_c])), alpha),
+                                              sAdd(sum1(tvals[t_e]), Ch(tvals[t_e], tvals[t_f], tvals[t_g])));           
+           pause;
+         }
+
+           // Setting the intermediate hash values of the block
+           next(hash_vals[0]) = sAdd(tvals[t_a], hash_vals[0]);    
+           next(hash_vals[1]) = sAdd(tvals[t_b], hash_vals[1]);
+           next(hash_vals[2]) = sAdd(tvals[t_c], hash_vals[2]);
+           next(hash_vals[3]) = sAdd(tvals[t_d], hash_vals[3]);
+           next(hash_vals[4]) = sAdd(tvals[t_e], hash_vals[4]);
+           next(hash_vals[5]) = sAdd(tvals[t_f], hash_vals[5]);
+           next(hash_vals[6]) = sAdd(tvals[t_g], hash_vals[6]);
+           next(hash_vals[7]) = sAdd(tvals[t_h], hash_vals[7]);
+
+           next(hash_block_rdy) = true;
+           pause;
+      }
+   }
+
+}
+

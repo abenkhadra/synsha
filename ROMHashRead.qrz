@@ -1,0 +1,54 @@
+   
+
+// BROM to store the hashing results to be used in functional verifying 
+//   of UserModule.
+module ROMHashRead(event bool ?enable, 
+                     nat{34} ?addr, 
+                     bv{32} !data
+){
+   loop{
+
+      immediate await(enable);
+      case
+         (addr==0) do next(data)= 0x7852B855; 
+         (addr==1) do next(data)= 0xA495991B; 
+         (addr==2) do next(data)= 0x649B934C; 
+         (addr==3) do next(data)= 0x27AE41E4; 
+         (addr==4) do next(data)= 0x996FB924; 
+         (addr==5) do next(data)= 0x9AFBF4C8; 
+         (addr==6) do next(data)= 0x98FC1C14; 
+         (addr==7) do next(data)= 0xE3B0C442; 
+
+         (addr==8)  do next(data)= 0x02D23677; 
+         (addr==9)  do next(data)= 0xC997882A; 
+         (addr==10) do next(data)= 0x82447FAF; 
+         (addr==11) do next(data)= 0x4C4EF81C; 
+         (addr==12) do next(data)= 0x3CBD3939; 
+         (addr==13) do next(data)= 0x568B55E9; 
+         (addr==14) do next(data)= 0xCF4552B2; 
+         (addr==15) do next(data)= 0xE12E115A; 
+
+         (addr==16) do next(data)= 0x4283FC48; 
+         (addr==17) do next(data)= 0x928B91BE; 
+         (addr==18) do next(data)= 0x517F2415; 
+         (addr==19) do next(data)= 0x0A578BC1; 
+         (addr==20) do next(data)= 0x4214E4CD; 
+         (addr==21) do next(data)= 0x1AE8463E; 
+         (addr==22) do next(data)= 0x9258257B; 
+         (addr==23) do next(data)= 0x9AC2197D; 
+
+         (addr==24) do next(data)= 0x2EACCC9A; 
+         (addr==25) do next(data)= 0x735DFAC9; 
+         (addr==26) do next(data)= 0x0EB35A5F; 
+         (addr==27) do next(data)= 0x943D6989; 
+         (addr==28) do next(data)= 0xFDD20F7B; 
+         (addr==29) do next(data)= 0x7AE008AE; 
+         (addr==30) do next(data)= 0xD6FF5CE7; 
+         (addr==31) do next(data)= 0xBB56D0D3; 
+
+         default nothing;
+     pause;
+  } 
+}
+   
+   

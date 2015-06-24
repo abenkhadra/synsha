@@ -1,0 +1,186 @@
+
+// Wrapper module used to provide input stimuli and check the resulting hash of UserModule.
+module TestModule (
+	mem bool	!success0,
+	mem bool	!done0,
+	mem bool	!success1,
+	mem bool	!done1,
+	mem bool	!success2,
+	mem bool	!done2,
+	mem bool	!success3,
+	mem bool	!done3
+) {
+
+    
+	bv{32} current_hash_val;
+   nat{34} index;
+   event bool rom_enable;
+   bool result;
+
+	// "" (empty message)
+
+	// "ABCD"
+	bv{32} vector1;
+
+	// "ABCDEFGH"
+	bv{32} vector2_0;
+	bv{32} vector2_1;
+
+	// 20x "ABCD"
+	bv{32} vector3;
+   
+   event	bool start_verify, done_verify;
+   event bool cur_success;
+
+			bv{32}	msg_data;
+			bool	msg_valid;
+			bool	msg_end;
+	event	bool	msg_ack;
+
+			bv{32}	hash_data;
+			bool	hash_valid;
+   event	bool	hash_ack;
+  
+	vector1 = nat2bv(65, 8) @ nat2bv(66, 8) @ nat2bv(67, 8) @ nat2bv(68, 8);
+
+	vector2_0 = nat2bv(65, 8) @ nat2bv(66, 8) @ nat2bv(67, 8) @ nat2bv(68, 8);
+	vector2_1 = nat2bv(69, 8) @ nat2bv(70, 8) @ nat2bv(71, 8) @ nat2bv(72, 8);
+
+	vector3 = nat2bv(65, 8) @ nat2bv(66, 8) @ nat2bv(67, 8) @ nat2bv(68, 8);
+
+   //MODIFIED BY AMMAR 
+	{
+
+     // Load the first verification hash at index=0 in the next clock cycle
+      index = 0;
+      next(index) = 1;
+      emit(rom_enable);
+		// -----------------------------------
+		// Test vector 0
+
+		// End of message
+		msg_valid = false;
+		msg_end = true;
+		immediate await (msg_ack);
+		pause;
+		msg_end = false;
+
+     // current_hash_val = hash0;      
+      emit(start_verify);    
+		await(done_verify);
+		emit next(done0);
+      next(success0) = cur_success;
+		// -----------------------------------
+		// Test vector 1
+
+		// Send first word
+		msg_data = vector1;
+		msg_valid = true;
+		immediate await (msg_ack);
+		pause;
+
+		// End of message
+		msg_valid = false;
+		msg_end = true;
+		immediate await (msg_ack);
+		pause;
+		msg_end = false;
+      
+      emit(start_verify);    
+		await(done_verify);
+		emit next(done1);
+      next(success1) = cur_success;
+
+		// -----------------------------------
+		// Test vector 2
+
+		// Send first word
+		msg_data = vector2_0;
+		msg_valid = true;
+		immediate await (msg_ack);
+		pause;
+
+		// Send second word
+		msg_data = vector2_1;
+		msg_valid = true;
+		immediate await (msg_ack);
+		pause;
+
+		// End of message
+		msg_valid = false;
+		msg_end = true;
+		immediate await (msg_ack);
+		pause;
+
+		msg_end = false;
+      
+      emit(start_verify);    
+		await(done_verify);
+		emit next(done2);
+      next(success2) = cur_success;
+
+
+		// -----------------------------------
+		// Test vector 3
+
+		for (i=0..19) {
+			// Send i-th word
+			msg_data = vector3;
+			msg_valid = true;
+			immediate await (msg_ack);
+			pause;
+		}
+
+		// End of message
+		msg_valid = false;
+		msg_end = true;
+		immediate await (msg_ack);
+		pause;
+		msg_end = false;
+
+      emit(start_verify);    
+		await(done_verify);
+		emit next(done3);
+      next(success3) = cur_success;
+		pause;
+	}
+	||
+	{
+		// Unit Under Test
+		InUserModule:UserModule(msg_data, msg_valid, msg_end, msg_ack, hash_data, hash_valid, hash_ack);
+	}
+   ||
+   {
+      loop {
+         immediate await(start_verify);
+         result = true;
+     
+         for (i = 0 .. 7) {
+            immediate await (hash_valid);
+            hash_ack = true;
+            next(index) = index + 1;
+            emit(rom_enable);
+            if (hash_data !=  current_hash_val)
+               next(result) = false;
+            pause;
+         }
+         cur_success = result;
+         emit (done_verify);
+      }
+   }
+   ||
+   {
+      InROM:ROMHashRead(rom_enable, index, current_hash_val);
+   }
+}
+drivenby {
+	await(done0);
+	assert(success0 == true);
+	await(done1);
+	assert(success1 == true);
+	await(done2);
+	assert(success2 == true);
+	await(done3);
+	assert(success3 == true);
+}
+
